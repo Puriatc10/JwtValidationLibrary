@@ -50,12 +50,9 @@ namespace JWTValidation
                     //
                     //
 
-
-                }
-                else
-                {
                     DataStorage.StoreData(sessionId);
                 }
+                
             }
             catch (SecurityTokenExpiredException ex)
             {
