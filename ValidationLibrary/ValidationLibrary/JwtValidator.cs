@@ -1,37 +1,39 @@
 ﻿using Microsoft.AspNetCore.Http;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
+using ValidationLibrary.Dto;
 
 namespace JWTValidation
 {
     public static class JwtValidator
     {
         private static string publicKey = "MIIBCgKCAQEAz8gU7Dr6Gte4d4vKqtXGEARpAzhCYu930gjRdd+5Ew8XMGANc3XyOeSAcE0QtBnwCXs9Vp5OhOLOVTUetS+Bxdgub6iefdZovIisKaVi5rBaZzVenZYZh8bra1u2yTJad3U+HmGg/Kkpkbw9HUygDdwO0u9VvNxtB3fLS/MnxCmjBAHpgD5m4Lzqg5SCz2ouAPaW9FHnYATVMAN3qya1a0DTclm4UqCLYD85KbGaqIPgIBhDFX7YzxtHnOeCQcqcjx7DwIm/XgMN1kWLwkAlq3OPPyTuBQ2Cm+3+YxnbEaJaOwP/PYxFkAwOrs5VHMOdO9O6/DGAiNdPl+I7qkTSqQIDAQAB";
-        public static async Task TokenValidate(this HttpContext httpContext)
+        public static async Task<ValidationResponse> TokenValidate(string token)
         {
             try
             {
-                var accessToken = httpContext.Request.Headers.Authorization.ToString().Split(" ")[1];
-                if (string.IsNullOrEmpty(accessToken))
+                if (string.IsNullOrEmpty(token))
                 {
-                    httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    httpContext.Response.WriteAsync("Token not found.");
-                    return;
+                    return new ValidationResponse { 
+                        StatusCode = StatusCodes.Status401Unauthorized,
+                        Message = "Token not found." };
                 }
 
-                var key = Encoding.UTF8.GetBytes(publicKey);
+                var rsaSecurityKey = CreateRsaSecurityKeyFromPublicKey(publicKey);
                 var tokenHandler = new JwtSecurityTokenHandler();
 
-                tokenHandler.ValidateToken(accessToken, new TokenValidationParameters
+                tokenHandler.ValidateToken(token, new TokenValidationParameters
                 {
                     ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(key),
-                    ValidateIssuer = true,
-                    ValidateAudience = true,
+                    IssuerSigningKey = rsaSecurityKey,
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
                     ClockSkew = TimeSpan.Zero
                 }, out SecurityToken validatedToken);
 
@@ -39,9 +41,11 @@ namespace JWTValidation
                 var sessionId = jwtToken?.Claims.FirstOrDefault(c => c.Type == "session").Value;
                 if (sessionId == null)
                 {
-                    httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    httpContext.Response.WriteAsync("sessionId not found.");
-                    return;
+                    return new ValidationResponse
+                    {
+                        StatusCode = StatusCodes.Status401Unauthorized,
+                        Message = "sessionId not found."
+                    };
                 }
 
                 if (!DataStorage.ContainsData(sessionId))
@@ -50,15 +54,37 @@ namespace JWTValidation
                     //
                     //
 
+
+
                     DataStorage.StoreData(sessionId);
                 }
-                
             }
             catch (SecurityTokenExpiredException ex)
             {
-                httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                httpContext.Response.WriteAsync("Token expired.");
-                return;
+
+                return new ValidationResponse
+                {
+                    StatusCode = StatusCodes.Status401Unauthorized,
+                    Message = "Token expired."
+                };
+            }
+
+            return new ValidationResponse
+            {
+                StatusCode = StatusCodes.Status200OK,
+                Message = "Token Authorized Successfully."
+            };
+        }
+
+        private static RsaSecurityKey CreateRsaSecurityKeyFromPublicKey(string publicKey)
+        {
+            byte[] publicKeyBytes = Convert.FromBase64String(publicKey);
+            using (RSA rsa = RSA.Create())
+            {
+                rsa.ImportSubjectPublicKeyInfo(publicKeyBytes, out _);
+                RSAParameters rsaParameters = rsa.ExportParameters(includePrivateParameters: false);
+                var rsaSecurityKey = new RsaSecurityKey(rsaParameters);
+                return rsaSecurityKey;
             }
         }
 
